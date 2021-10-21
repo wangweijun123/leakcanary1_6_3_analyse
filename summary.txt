@@ -74,3 +74,67 @@ com.squareup.leakcanary.internal.HeapAnalyzerService
 gc root:
 
 static (java与native) ,常量引用， system class(inputmethod)
+
+
+leakcanary1.6.3 源码分析(add log)
+
+什么时机去启动分析：
+
+pathFinder.findPath(snapshot, leakingRef);// 快照与泄露的实例Instance
+snapshot.getRoots() 拿到所有gc root 的节点,一个集合
+LeakNode 有属性{instance}
+
+将所有root节点放入queue中， while(true) 从queue队列中poll出来，对比instance，如果不ok，
+获取这个节点的instance，创建一个新节点 new LeakNode(instance, parent)， 加入队列, 传这个parent
+就是一旦对比上了实例，引用链条就出来了,就可以展示了哈
+
+1 dump 堆到文件
+2 解析文件 (根据具体class 所对应的key去拿调用栈)
+
+重要的方法
+RefWatcher.ensureGone(referenc, xxx) {
+     // dump 堆 到 文件
+   File heapDumpFile = heapDumper.dumpHeap();
+   //  解析文件(根据key)
+
+   // 启动	HeapAnalyzerService 在另外一个进程分析
+   // 因为这里会产生gc
+
+
+}
+
+DisplayLeakActivity   android:process=":leakcanary"
+RequestStoragePermissionActivity
+com.squareup.leakcanary.DisplayLeakService
+com.squareup.leakcanary.internal.HeapAnalyzerService
+
+leakcanary 整体流程:  主进程，分析进程
+
+主进程: onActivityDestroyed()  --> RefWatcher.watch(Object watchedReference, String referenceName)--> 弱引用包裹, 同时传入了
+一个queue  --> 当主线程空闲的时候启动子线程延时5秒执行分析 -->
+从队列中获取对象， 如果存在软引用对象，就认为对象被回收了(注意拿出的是软引用对象),
+如果没有，有可能内存泄露, 这个时候下载 堆到文件 --->可能引发 gc (stop the world), 所以这里应该考虑应用在前台还是在后台
+线上使用的时候 -> Debug.dumpHprofData() 这里耗时,而且可能引发 gc (stop the world)
+
+启动service(子进程)分析：参数: key  类名: KeyedWeakReference
+
+文件映射到内存: 默认大小为1G 与 文件大小比较
+
+haha 库中api ，HprofParser 解析
+
+第一步： 需要根据 key 与 类名: KeyedWeakReference  ，找到这个instance, 根据类名获取KeyedWeakReference  类对象,
+然后获取类对象所有instance，根据instance拿到所有filed，比对就可以找到泄露的对象
+
+第二步: 找到泄露对象的引用链，也就是需要追溯到它的gc root: 也只能从gc root 开始遍历，找寻到这个泄露的instance
+, 首先收集所有的gc root 集合,  gc root 根对象在堆上，从leakcanary源代码来看，有多个堆, 4个,吧所有堆上的gc root 加入到queue，
+遍历这个queue，开始广度搜索,  找到这个对象,
+
+Instance : 子类有 ClassInstance, ClassObj, RootObj, ArrayInstance,
+
+
+
+
+
+
+
+
